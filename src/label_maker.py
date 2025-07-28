@@ -14,3 +14,13 @@ game_results = raw_df.groupby('game_id').agg({
     "total_away_score": "last"
 }).reset_index()
 
+#function that determines the winner of each game
+def get_winning_team(row):
+    if row["total_home_score"] > row["total_away_score"]:
+        return row["home_team"]
+    elif row["total_home_score"] < row["total_away_score"]:
+        return row["away_team"]
+    else:
+        return "Tie"
+
+
