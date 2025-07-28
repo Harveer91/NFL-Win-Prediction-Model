@@ -23,4 +23,16 @@ def get_winning_team(row):
     else:
         return "Tie"
 
+#applys the get_winning_team function to every row in the game_results DataFrame
+game_results["winning_team"] = game_results.apply(get_winning_team, axis=1)
 
+#Merge game results into the cleaned play-by-play data
+labeled_df = clean_df.merge(game_results[["game_id", "winning_team"]], on="game_id", how="left")
+
+#Add a new column that is in binary based on posteam result
+labeled_df["posteam_win"] = (labeled_df["posteam"] == labeled_df["winning_team"]).astype(int)
+ 
+labeled_df = labeled_df[labeled_df["winning_team"] != "Tie"]
+
+#Saved data to database
+labeled_df.to_sql("play_by_play_data_labeled", con=Database_engine, if_exists="replace", index=False)
