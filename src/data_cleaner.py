@@ -15,78 +15,29 @@ def clean_data(df):
         (df["game_seconds_remaining"] > 0)
     ]
 
-    #removing certain cols from database due to these coloumns showing predictive outcomes 
-    #removing data that would be unknown prior to a play starting in order to avoid breaking model 
-    data_to_be_removed = data_to_be_removed = [
-    # Descriptive text & outcome summary
-    "desc", "yards_gained",
-
-    # EPA-related columns
-    "epa", "ep", "total_home_epa", "total_away_epa",
-    "total_home_rush_epa", "total_away_rush_epa",
-    "total_home_pass_epa", "total_away_pass_epa",
-    "air_epa", "yac_epa", "comp_air_epa", "comp_yac_epa",
-    "total_home_comp_air_epa", "total_away_comp_air_epa",
-    "total_home_comp_yac_epa", "total_away_comp_yac_epa",
-    "total_home_raw_air_epa", "total_away_raw_air_epa",
-    "total_home_raw_yac_epa", "total_away_raw_yac_epa",
-
-    # Win Probability columns 
-    "wp", "def_wp", "home_wp", "away_wp",
-    "home_wp_post", "away_wp_post",
-    "vegas_wp", "vegas_home_wp",
-
-    # Win Probability Added columns 
-    "wpa", "vegas_wpa", "vegas_home_wpa",
-    "air_wpa", "yac_wpa", "comp_air_wpa", "comp_yac_wpa",
-    "total_home_comp_air_wpa", "total_away_comp_air_wpa",
-    "total_home_comp_yac_wpa", "total_away_comp_yac_wpa",
-    "total_home_raw_air_wpa", "total_away_raw_air_wpa",
-    "total_home_raw_yac_wpa", "total_away_raw_yac_wpa",
-    "total_home_pass_wpa", "total_away_pass_wpa",
-    "total_home_rush_wpa", "total_away_rush_wpa",
-
-    # Score/post-play outcome values
-    "score_differential_post",
-    "posteam_score_post", "defteam_score_post",
-    "total_home_score", "total_away_score", "posteam_score", "defteam_score",
-
-    # Touchdown info (outcome of play)
-    "td_team", "td_player_name", "td_player_id",
-
-    # FG/XP/2pt outcomes (post-play)
-    "field_goal_result", "kick_distance",
-    "extra_point_result", "two_point_conv_result",
-
-    # Win prob subcomponents (leakage)
-    "win_prob", "home_win_prob", "away_win_prob",
-    "no_score_prob", "opp_fg_prob", "opp_safety_prob", "opp_td_prob",
-    "fg_prob", "safety_prob", "td_prob",
-    "extra_point_prob", "two_point_conversion_prob",
-
-    # Play results 
-    "incomplete_pass", "interception",
-    "touchback", "punt_inside_twenty", "punt_downed", "punt_fair_catch",
-    "punt_in_endzone", "punt_out_of_bounds",
-    "kickoff_inside_twenty", "kickoff_in_endzone",
-    "kickoff_out_of_bounds", "kickoff_downed",
-
-    # First/third/fourth down conversion results (outcomes)
-    "first_down_rush", "first_down_pass", "first_down_penalty",
-    "third_down_converted", "third_down_failed",
-    "fourth_down_converted", "fourth_down_failed"
-]
+    #keeping all preplay coloums, filters out already existing probability models and result oriented data
+    data_to_keep = [
+        "game_id", "play_id", "home_team", "away_team", "posteam", "defteam", "posteam_type",
+        "season_type", "week", "qtr", "quarter_seconds_remaining", "half_seconds_remaining",
+        "game_seconds_remaining", "game_half", "quarter_end", "drive",
+        "down", "goal_to_go", "yardline_100", "ydstogo",
+        "shotgun", "no_huddle", "qb_dropback", "qb_scramble", "qb_kneel", "qb_spike",
+        "side_of_field", "yrdln", "time",
+        "home_timeouts_remaining", "away_timeouts_remaining",
+        "posteam_timeouts_remaining", "defteam_timeouts_remaining",
+        "timeout", "timeout_team"
+    ]
 
 
-    cols_to_drop = []
+    cols_to_keep = []
 
-    #filters through dataframe to remove cols that were requested, if doesn't appear will skip it 
-    for col in data_to_be_removed:
+    #filters through dataframe to keep the coloumns that are 
+    for col in data_to_keep:
         if col in df.columns:
-            cols_to_drop.append(col)
+            cols_to_keep.append(col)
     
-    #drops the unwanted columns
-    df = df.drop(columns = cols_to_drop)
+    #drops the unwanted cols while keeping the wanted ones 
+    df = df[cols_to_keep]
 
     return df 
 
