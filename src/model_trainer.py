@@ -6,11 +6,25 @@ from load_data import Database_engine
 
 df = pd.read_sql("SELECT * FROM play_by_play_data_labeled", con=Database_engine)
 
+target = "posteam_win"
+
 columns_to_remove = ["game_id", "play_id", "home_team", "away_team", "posteam", "defteam", "winning_team", "posteam_win"]
 
 cols_feature = []
 
+#removing unwanted coloums for dataset that will be used for training
 for col in df.columns:
     if col not in columns_to_remove:
         cols_feature.append(col)
+
+#new dataset with the prefered data 
+X = df[cols_feature]
+y = df[target]
+
+X = pd.get_dummies(X)
+
+#setting train/test split to 80/20
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=20)
+
+
 
