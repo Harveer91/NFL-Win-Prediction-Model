@@ -1,11 +1,12 @@
-
 import pandas as pd 
+from sqlalchemy import text 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from load_data import Database_engine
 
-df = pd.read_sql("SELECT * FROM play_by_play_data_labeled", con=Database_engine)
+with Database_engine.connect() as conn:
+   df = pd.read_sql(text("SELECT * FROM play_by_play_data_labeled"), con=conn)
 
 target = "posteam_win"
 
@@ -15,8 +16,8 @@ cols_feature = []
 
 #removing unwanted coloums for dataset that will be used for training
 for col in df.columns:
-    if col not in columns_to_remove:
-        cols_feature.append(col)
+   if col not in columns_to_remove:
+       cols_feature.append(col)
 
 #new dataset with the prefered data 
 X = df[cols_feature]
@@ -26,7 +27,6 @@ X = pd.get_dummies(X)
 
 #setting train/test split to 80/20
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=20)
-
 
 model = LogisticRegression(max_iter=1000)
 model.fit(X_train, y_train)
