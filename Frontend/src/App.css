@@ -1,0 +1,28 @@
+#Title{
+  font-family:'Poppins', 'Montserrat', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 60px;
+  margin-left: 375px;
+  font-style: italic;
+  text-shadow: 2px 2px 2px hsl(0, 100%, 42%);
+  color: hsl(0, 5%, 83%);
+}
+
+#Team-selector{
+  width: 90%;
+  height:45px;
+  margin-left: 70px;
+  font-size: 30px;
+  font-family:'Times New Roman', Times, serif;
+  border-radius: 5px;
+  border-color:hsl(0, 1%, 52%);
+  border-width: 3px;
+  transition: transform 0.3s ease;
+  color:hsl(0, 0%, 0%);
+  background-color: rgb(253, 253, 253);
+}
+
+#Team-selector:hover{
+  transform: scale(1.05);
+  background-color: antiquewhite;
+
+}
