@@ -27,7 +27,7 @@ function Button(){
             {isOpen && ( // use of conditional rendering to determine if if the button isOpen
                 <ul className="dropdown-menu">
                     {teams.map((team,index) => (
-                        <li key={index} onClick={() => HandleSelect(team)}>
+                        <li id="option" key={index} onClick={() => HandleSelect(team)}>
                             {team}
                         </li>
                     ))}
