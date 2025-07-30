@@ -1,4 +1,5 @@
 import pandas as pd 
+import joblib
 from sqlalchemy import text 
 from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
@@ -31,7 +32,10 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
 model.fit(X_train, y_train)
 
-y_prediction = model.predict(X_test)
+joblib.dump(model, "xgb_play_by_play_model.pkl")
+loaded_model = joblib.load("xgb_play_by_play_model.pkl")
+
+y_prediction = loaded_model.predict(X_test)
 
 print("Accuracy:", accuracy_score(y_test, y_prediction))
 print("Confusion Matrix:\n", confusion_matrix(y_test, y_prediction))
