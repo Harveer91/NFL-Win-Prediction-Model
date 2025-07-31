@@ -1,4 +1,5 @@
 import pandas as pd
+import nfl_data_py as nfl
 from sqlalchemy import text
 from load_data import Database_engine
 import joblib
@@ -10,53 +11,53 @@ with Database_engine.connect() as conn:
 #load trained model
 model = joblib.load("xgb_play_by_play_model.pkl")
 
-#removing cols from input 
-columns_to_remove = ["game_id", "play_id", "home_team", "away_team", "posteam", "defteam", "winning_team", "posteam_win"]
-feature_cols = []
+#2025 schedule 
+schedule_2025 = nfl.import_schedules([2025])
+#print(schedule_2025.head(256)) only to confirm if the 2025 exists in wrapper
 
-for col in df.columns:
-    if col not in columns_to_remove:
-        feature_cols.append(col)
+#simulates 
+home_teams_df = schedule_2025.copy()
+home_teams_df['posteam'] = home_teams_df['home_team']
+home_teams_df['possession_side'] = 'home'
 
-#creating the input features
-X = df[feature_cols]
-#translating df info for ml by converting categorical collous into binary coloumns(one-hot encoding)
-X = pd.get_dummies(X)
+away_teams_df = schedule_2025.copy()
+away_teams_df['posteam'] = away_teams_df['away_team']
+away_teams_df['possession_side'] = 'away'
 
-# Ensure all expected model input columns exist in X (add missing ones as 0s)
+prediction_df = pd.concat([home_teams_df, away_teams_df], ignore_index=True)
+
+# One-hot encode the 'posteam' column
+X = pd.get_dummies(prediction_df['posteam'])
+
+
 model_features = model.get_booster().feature_names
 
 for col in model_features:
     if col not in X.columns:
         X[col] = 0
 
-
+# Reorder columns to match model's expected input
 X = X[model_features]
 
-#Prediction
-df['predicted_posteam_win'] = model.predict(X)
+prediction_df['posteam_win_pred'] = model.predict(X)
 
-def decide_final_winner(game_df):
-    home_team = game_df['home_team'].iloc[0]
-    away_team = game_df['away_team'].iloc[0]
-
-    home_win_plays = 0
-    away_win_plays = 0
-
-    for _, row in game_df.iterrows():
-        if row['predicted_posteam_win'] == 1:
-            if row['posteam'] == home_team:
-                home_win_plays += 1
-            elif row['posteam'] == away_team:
-                away_win_plays += 1
-
-    if home_win_plays > away_win_plays:
-        return home_team
-    elif away_win_plays > home_win_plays:
-        return away_team
-    else:
-        return "Tie"
+# aggregate to find final winner
+def get_winner(group):
+    home_row = group[group['possession_side'] == 'home']
+    away_row = group[group['possession_side'] == 'away']
     
-final_game_winners = df.groupby('game_id').apply(decide_final_winner).reset_index(name='projected_winner')
+    if home_row['posteam_win_pred'].values[0] > away_row['posteam_win_pred'].values[0]:
+        return home_row['posteam'].values[0]
+    else:
+        return away_row['posteam'].values[0]
 
-print(final_game_winners.head(17))
+final_predictions = prediction_df.groupby('game_id').apply(get_winner).reset_index(name='projected_winner')
+
+# Merge with schedule
+final_predictions = final_predictions.merge(
+    schedule_2025[['game_id', 'home_team', 'away_team']],
+    on='game_id',
+    how='left'
+)
+#test to see if the model works 
+print(final_predictions.head(17))
