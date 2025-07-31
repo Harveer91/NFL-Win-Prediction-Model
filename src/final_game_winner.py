@@ -29,19 +29,17 @@ prediction_df = pd.concat([home_teams_df, away_teams_df], ignore_index=True)
 # One-hot encode the 'posteam' column
 X = pd.get_dummies(prediction_df['posteam'])
 
-
 model_features = model.get_booster().feature_names
+missing_cols = [col for col in model_features if col not in X.columns]
+X_missing = pd.DataFrame(0, index=X.index, columns=missing_cols)
+X = pd.concat([X, X_missing], axis=1)
 
-for col in model_features:
-    if col not in X.columns:
-        X[col] = 0
-
-# Reorder columns to match model's expected input
+# Reorder columns to match model
 X = X[model_features]
 
 prediction_df['posteam_win_pred'] = model.predict(X)
 
-# aggregate to find final winner
+
 def get_winner(group):
     home_row = group[group['possession_side'] == 'home']
     away_row = group[group['possession_side'] == 'away']
