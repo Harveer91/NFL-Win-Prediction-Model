@@ -2,6 +2,7 @@ const LINKS = [
   { id: 'performance', label: 'Model Performance' },
   { id: 'games', label: 'Games' },
   { id: 'ratings', label: 'Power Ratings' },
+  { id: 'fraud', label: 'Fraud-o-Meter' },
   { id: 'method', label: 'Methodology' },
 ]
 

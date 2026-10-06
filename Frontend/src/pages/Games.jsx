@@ -23,8 +23,8 @@ function GameCard({ g, threshold }) {
       <header className="game__head">
         <span>{fmtDate(g.gameday, played ? null : g.gametime)}</span>
         {played ? (
-          <span className={`pill ${g.correct ? 'pill--good' : g.correct === false ? 'pill--bad' : ''}`}>
-            {g.correct ? 'Correct' : g.correct === false ? 'Missed' : 'Tie'}
+          <span className={`pill ${g.correct === true ? 'pill--good' : g.correct === false ? 'pill--bad' : ''}`}>
+            {g.correct === true ? 'Correct' : g.correct === false ? 'Wrong' : 'Tie'}
           </span>
         ) : (
           <span className="pill pill--live">Upcoming</span>
@@ -96,7 +96,7 @@ export default function Games() {
   if (view === 'final') games = games.filter((g) => g.result != null)
 
   const graded = games.filter((g) => g.correct != null)
-  const right = graded.filter((g) => g.correct).length
+  const right = graded.filter((g) => g.correct === true).length
 
   return (
     <div className="stack">

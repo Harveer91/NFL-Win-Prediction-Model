@@ -5,8 +5,9 @@ import Performance from './pages/Performance'
 import Games from './pages/Games'
 import Ratings from './pages/Ratings'
 import Methodology from './pages/Methodology'
+import FraudMeter from './pages/FraudMeter'
 
-const PAGES = { performance: Performance, games: Games, ratings: Ratings, method: Methodology }
+const PAGES = { performance: Performance, games: Games, ratings: Ratings, fraud: FraudMeter, method: Methodology }
 
 export default function App() {
   const route = useHashRoute()

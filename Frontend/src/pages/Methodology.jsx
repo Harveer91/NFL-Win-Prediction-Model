@@ -15,34 +15,18 @@ const FEATURE_INFO = {
 export default function Methodology() {
   const { data, error } = useData('performance')
   if (!data) return <Loading error={error} />
-  const b = data.bias_check
   return (
     <div className="stack narrow">
       <div className="hero">
         <div>
           <p className="eyebrow">About</p>
           <h1>Methodology</h1>
-          <p className="lede">What the model uses, how it's tested, and how the home-team bias was removed.</p>
+          <p className="lede">What the model uses, how it's tested, and how the Fraud-o-Meter is scored.</p>
         </div>
       </div>
 
-      <Panel title="The home-team bias (fixed)">
+      <Panel title="How it works">
         <div className="prose">
-          <p>
-            The first version simulated 500 random in-game situations per matchup and scored them with a play-by-play
-            XGBoost model. That model never saw who was playing: team identity and score were dropped, so the only
-            thing that differed between the two sides was <code>posteam_type = home</code>. Each side was also scored
-            separately, so the two probabilities didn't sum to 1.
-          </p>
-          {b && (
-            <p>
-              The result: <strong>{pct(b.legacy.home_pick_rate, 0)}</strong> of 2025 games went to the home team,
-              though home teams only won {pct(b.home_win_rate, 0)}. Accuracy was {pct(b.legacy.su, 1)}, close to a coin
-              flip. The current model picks the home side in {pct(b.current.home_pick_rate, 0)} of those games and hits{' '}
-              {pct(b.current.su, 1)}.
-            </p>
-          )}
-          <p>The rebuild:</p>
           <ul>
             <li><strong>Pre-game team strength.</strong> Ratings come only from games played before kickoff.</li>
             <li>
@@ -89,6 +73,17 @@ export default function Methodology() {
               {data.ats_edge_threshold} points. Units assume −110 odds; break-even is 52.4%.
             </li>
           </ul>
+        </div>
+      </Panel>
+
+      <Panel title="Fraud-o-Meter">
+        <div className="prose">
+          <p>
+            For each team, season to date, the meter blends two gaps: actual wins minus the wins the model expected (the
+            sum of its pre-game win probabilities), and actual wins minus Pythagorean wins from points scored and allowed.
+            The point-differential gap counts for two thirds, the model gap for one third. The result is shrunk toward zero early in the season, then mapped to 0–100. 50 is a record that matches
+            the underlying play; 75+ is a <strong>Certified Fraud</strong>, 25 or below is <strong>Snakebitten</strong>.
+          </p>
         </div>
       </Panel>
     </div>

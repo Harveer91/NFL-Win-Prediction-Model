@@ -20,7 +20,6 @@ from pregame_model import TRAIN_START_SEASON, SymmetricGameModel, walk_forward
 ROOT = os.path.dirname(DATA_DIR)
 FRONTEND_DATA_DIR = os.path.join(ROOT, "Frontend", "public", "data")
 MODEL_PATH = os.path.join(ROOT, "models", "pregame_model.pkl")
-LEGACY_PREDICTIONS = os.path.join(DATA_DIR, "legacy_2025_season_predictions.csv")
 
 FIRST_REPORT_SEASON = 2009
 ATS_EDGE_THRESHOLD = 1.5  # points between model margin and the spread before we "bet"
@@ -49,7 +48,8 @@ def annotate(preds):
         preds["result"] > 0, preds["home_team"], np.where(preds["result"] < 0, preds["away_team"], "TIE")
     )
     preds.loc[~played, "winner"] = None
-    preds["correct"] = np.where(played & (preds["result"] != 0), preds["pick"] == preds["winner"], np.nan)
+    graded = played & (preds["result"] != 0)
+    preds["correct"] = (preds["pick"] == preds["winner"]).astype(object).where(graded, None)
     ats = preds.apply(_ats_outcome, axis=1, result_type="expand")
     preds["ats_side"], preds["ats_result"] = ats[0], ats[1]
     preds["units"] = preds["ats_result"].map({"win": WIN_PAYOUT, "loss": -1.0, "push": 0.0})
@@ -118,35 +118,6 @@ def cumulative_units(preds):
          "cumulative": round(float(r.cumulative), 3)}
         for r in weekly.itertuples()
     ]
-
-
-def legacy_comparison(preds):
-    """How the old play-by-play simulation did on 2025 vs this model on the same games."""
-    if not os.path.exists(LEGACY_PREDICTIONS):
-        return None
-    legacy = pd.read_csv(LEGACY_PREDICTIONS)
-    actual = preds[["game_id", "home_team", "away_team", "result", "home_win_prob", "pick", "correct"]]
-    merged = legacy.merge(actual, on="game_id", suffixes=("_legacy", ""))
-    merged = merged[merged["result"].notna() & (merged["result"] != 0)]
-    winner = np.where(merged["result"] > 0, merged["home_team"], merged["away_team"])
-    legacy_home_prob = np.where(
-        merged["projected_winner"] == merged["home_team"], merged["win_probability"], 1 - merged["win_probability"]
-    )
-    return {
-        "season": 2025,
-        "games": int(len(merged)),
-        "home_win_rate": float((merged["result"] > 0).mean()),
-        "legacy": {
-            "su": float((merged["projected_winner"] == winner).mean()),
-            "home_pick_rate": float((merged["projected_winner"] == merged["home_team"]).mean()),
-            "mean_home_prob": float(np.mean(legacy_home_prob)),
-        },
-        "current": {
-            "su": float((merged["correct"] == True).mean()),  # noqa: E712
-            "home_pick_rate": float((merged["home_win_prob"] >= 0.5).mean()),
-            "mean_home_prob": float(merged["home_win_prob"].mean()),
-        },
-    }
 
 
 def power_ratings(model, ratings, active_teams):
@@ -247,7 +218,6 @@ def main():
         "seasons": seasons,
         "cumulative_units": cumulative_units(all_preds),
         "calibration": calibration(all_preds),
-        "bias_check": legacy_comparison(all_preds),
     }
     write_json("performance.json", performance)
     recent = all_preds[all_preds["season"] >= current_season - 1]
@@ -268,10 +238,6 @@ def main():
           f" | home teams actually won {s['home_win_rate']:.1%}")
     print(f"  Brier {s['brier']:.4f} | MAE {s['mae']:.2f} (market {s['market_mae']:.2f})")
     print(f"  ATS {s['ats_wins']}-{s['ats_losses']}-{s['ats_pushes']} ({s['ats_pct']:.1%}), units {s['units']:+.1f}")
-    if performance["bias_check"]:
-        b = performance["bias_check"]
-        print(f"  2025 home pick rate: legacy {b['legacy']['home_pick_rate']:.1%} -> {b['current']['home_pick_rate']:.1%}")
-
 
 if __name__ == "__main__":
     main()

@@ -1,11 +1,5 @@
-nfl_data_py
 pandas
 pyarrow
 numpy
 scikit-learn
 joblib
-sqlalchemy
-psycopg2-binary
-python-dotenv
-xgboost
-tqdm

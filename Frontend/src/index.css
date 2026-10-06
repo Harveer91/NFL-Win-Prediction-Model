@@ -125,15 +125,6 @@ code { font-family: var(--mono); font-size: 0.85em; background: var(--card-2); p
 .charttip__row strong { margin-left: auto; padding-left: 12px; font-family: var(--mono); }
 .charttip__dot { width: 8px; height: 8px; border-radius: 50%; }
 
-/* Bias compare */
-.bias-compare { display: flex; align-items: stretch; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-.bias-compare__item { flex: 1; min-width: 140px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
-.bias-compare__item span { font-size: 11px; color: var(--muted); }
-.bias-compare__item strong { font-family: var(--mono); font-size: 24px; }
-.bias-compare__item small { color: var(--dim); font-size: 11px; }
-.bias-compare__item--bad strong { color: var(--rose); }
-.bias-compare__item--good strong { color: var(--teal); }
-.bias-compare__arrow { align-self: center; color: var(--dim); font-size: 20px; }
 
 /* Tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
@@ -221,4 +212,41 @@ code { font-family: var(--mono); font-size: 0.85em; background: var(--card-2); p
   .page { padding: 20px 14px 40px; }
   .stat-grid { grid-template-columns: 1fr; }
   .hero h1 { font-size: 26px; }
+}
+
+/* Fraud-o-Meter */
+.field { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.legend { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.tier { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.tier--fraud { background: rgba(251, 113, 133, .15); color: #fb7185; }
+.tier--watch { background: rgba(251, 191, 36, .14); color: #fbbf24; }
+.tier--legit { background: rgba(148, 163, 184, .14); color: #cbd5e1; }
+.tier--under { background: rgba(125, 211, 252, .14); color: #7dd3fc; }
+.tier--snake { background: rgba(45, 212, 191, .14); color: #2dd4bf; }
+.meter__body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: center; }
+.meter__dial { position: relative; }
+.gauge { width: 100%; display: block; }
+.meter__score { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: -4px; }
+.meter__score strong { font-family: var(--mono); font-size: 44px; line-height: 1; }
+.gauge__end { font-size: 7px; letter-spacing: .08em; fill: var(--dim); font-weight: 600; }
+.meter__stats { display: grid; gap: 8px; margin: 0; }
+.meter__stats div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.meter__stats dt { color: var(--muted); font-size: 12px; }
+.meter__stats dd { margin: 0; font-family: var(--mono); font-weight: 600; }
+.fraudboard { display: flex; flex-direction: column; gap: 2px; }
+.fraudboard__row { display: grid; grid-template-columns: 28px minmax(130px, 1.2fr) 64px 48px 52px minmax(140px, 2fr) 44px 128px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; background: none; border: 1px solid transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.fraudboard__row:hover { background: var(--card); }
+.fraudboard__row.is-selected { background: var(--card); border-color: var(--teal); }
+.fraudboard__row--head { cursor: default; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+.fraudboard__row--head:hover { background: none; }
+.fraudboard__row--head .fraudboard__bar { text-align: center; }
+.mono { font-family: var(--mono); }
+.divbar { position: relative; display: block; height: 10px; border-radius: 999px; background: var(--bg-2); }
+.divbar::after { content: ''; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--dim); }
+.divbar__fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; transition: all .3s ease; }
+@media (max-width: 900px) {
+  .meter__body { grid-template-columns: 1fr; }
+  .legend { margin-left: 0; }
+  .fraudboard__row { grid-template-columns: 24px minmax(110px, 1fr) 56px minmax(80px, 1.4fr) 36px; }
+  .fraudboard__row > :nth-child(4), .fraudboard__row > :nth-child(5), .fraudboard__row > :nth-child(8) { display: none; }
 }

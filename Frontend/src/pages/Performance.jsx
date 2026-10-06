@@ -152,29 +152,9 @@ function AccuracyChart({ seasons }) {
   )
 }
 
-function BiasChart({ seasons, bias }) {
+function HomePickChart({ seasons }) {
   return (
-    <Panel title="Home-Bias Monitor" subtitle="How often each side picked the home team vs how often home teams won">
-      {bias && (
-        <div className="bias-compare">
-          <div className="bias-compare__item bias-compare__item--bad">
-            <span>Old play-by-play model · 2025</span>
-            <strong>{pct(bias.legacy.home_pick_rate, 0)}</strong>
-            <small>home picks · {pct(bias.legacy.su, 1)} accurate</small>
-          </div>
-          <div className="bias-compare__arrow" aria-hidden>→</div>
-          <div className="bias-compare__item bias-compare__item--good">
-            <span>Current model · 2025</span>
-            <strong>{pct(bias.current.home_pick_rate, 0)}</strong>
-            <small>home picks · {pct(bias.current.su, 1)} accurate</small>
-          </div>
-          <div className="bias-compare__item">
-            <span>Home teams actually won</span>
-            <strong>{pct(bias.home_win_rate, 0)}</strong>
-            <small>{bias.games} games</small>
-          </div>
-        </div>
-      )}
+    <Panel title="Home-Pick Monitor" subtitle="How often the model picked the home team vs Vegas home favourites and actual home wins">
       <div className="chart">
         <ResponsiveContainer width="100%" height={220}>
           <ComposedChart data={seasons} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}>
@@ -316,7 +296,7 @@ export default function Performance() {
       <SeasonTable seasons={data.seasons} selected={scope} onSelect={setScope} />
 
       <div className="grid-2">
-        <BiasChart seasons={data.seasons} bias={data.bias_check} />
+        <HomePickChart seasons={data.seasons} />
         <CalibrationChart bins={data.calibration} />
       </div>
     </div>
