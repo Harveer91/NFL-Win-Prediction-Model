@@ -1,347 +1,243 @@
-import pandas as pd
-import numpy as np
-import nfl_data_py as nfl
-from sqlalchemy import text
-from load_data import Database_engine
+"""Predict every NFL game and export model-performance data for the frontend.
+
+    python src/final_game_winner.py
+
+Steps: download nflverse schedules + play-by-play, build pre-game team ratings,
+back-test the symmetric model season by season (train on past seasons only),
+fit on all completed games, then predict the rest of the current season.
+"""
+import json
+import os
+from datetime import datetime, timezone
+
 import joblib
-from tqdm import tqdm
+import numpy as np
+import pandas as pd
 
-# Load your trained model
-model = joblib.load("xgb_play_by_play_model.pkl")
+from pregame_features import DATA_DIR, FEATURES, build_features, load_games, load_team_game_epa
+from pregame_model import TRAIN_START_SEASON, SymmetricGameModel, walk_forward
 
-# Load your labeled training data (this is what your model was actually trained on)
-with Database_engine.connect() as conn:
-    labeled_df = pd.read_sql(text("SELECT * FROM play_by_play_data_labeled"), con=conn)
+ROOT = os.path.dirname(DATA_DIR)
+FRONTEND_DATA_DIR = os.path.join(ROOT, "Frontend", "public", "data")
+MODEL_PATH = os.path.join(ROOT, "models", "pregame_model.pkl")
 
-# Get 2025 schedule
-schedule_2025 = nfl.import_schedules([2025])
+FIRST_REPORT_SEASON = 2009
+ATS_EDGE_THRESHOLD = 1.5  # points between model margin and the spread before we "bet"
+WIN_PAYOUT = 100 / 110  # standard -110 juice
+CALIBRATION_BINS = np.linspace(0, 1, 11)
 
-def get_training_data_stats(labeled_df):
 
-    # Get available columns and their types
-    available_cols = labeled_df.columns.tolist()
-    
-    stats = {}
-    
-    # Build stats for columns that actually exist in your labeled data
-    if 'down' in available_cols:
-        stats['down_dist'] = labeled_df['down'].value_counts(normalize=True).sort_index()
-        
-        if 'ydstogo' in available_cols:
-            stats['ydstogo_stats'] = labeled_df.groupby('down')['ydstogo'].describe()
-    
-    if 'yardline_100' in available_cols:
-        stats['yardline_stats'] = labeled_df['yardline_100'].describe()
-    
-    if 'qtr' in available_cols:
-        stats['qtr_dist'] = labeled_df['qtr'].value_counts(normalize=True).sort_index()
-    
-    if 'game_seconds_remaining' in available_cols:
-        stats['game_seconds_stats'] = labeled_df['game_seconds_remaining'].describe()
-    
-    if 'quarter_seconds_remaining' in available_cols:
-        stats['quarter_seconds_stats'] = labeled_df['quarter_seconds_remaining'].describe()
-    
-    if 'half_seconds_remaining' in available_cols:
-        stats['half_seconds_stats'] = labeled_df['half_seconds_remaining'].describe()
-    
-    # Check for score differential (might be in labeled data)
-    score_cols = ['score_differential', 'home_score_diff', 'away_score_diff']
-    for col in score_cols:
-        if col in available_cols:
-            stats['score_diff_stats'] = labeled_df[col].describe()
-            stats['score_diff_col'] = col
-            break
-    
-    return stats
+def _ats_outcome(row):
+    edge = row["pred_margin"] - row["spread_line"]
+    if pd.isna(row["result"]) or pd.isna(edge) or abs(edge) < ATS_EDGE_THRESHOLD:
+        return None, None
+    side = "home" if edge > 0 else "away"
+    cover = row["result"] - row["spread_line"]
+    if cover == 0:
+        return side, "push"
+    won = (cover > 0) == (side == "home")
+    return side, "win" if won else "loss"
 
-def create_realistic_game_scenarios(home_team, away_team, labeled_df, n_scenarios=500):
-    """
-    Create realistic game scenarios based on your actual labeled data structure
-    """
-    # Get actual distributions from your labeled training data
-    stats = get_training_data_stats(labeled_df)
-    
-    scenarios = []
-    
-    # Sample from multiple game phases to get balanced predictions
-    game_phases = [
-        {'phase': 'early', 'qtr_range': [1, 2], 'score_range': (-7, 7), 'weight': 0.3},
-        {'phase': 'mid', 'qtr_range': [2, 3], 'score_range': (-14, 14), 'weight': 0.4}, 
-        {'phase': 'late', 'qtr_range': [3, 4], 'score_range': (-21, 21), 'weight': 0.3}
+
+def annotate(preds):
+    preds = preds.copy()
+    preds["pick"] = np.where(preds["home_win_prob"] >= 0.5, preds["home_team"], preds["away_team"])
+    preds["pick_prob"] = np.maximum(preds["home_win_prob"], 1 - preds["home_win_prob"])
+    played = preds["result"].notna()
+    preds["winner"] = np.where(
+        preds["result"] > 0, preds["home_team"], np.where(preds["result"] < 0, preds["away_team"], "TIE")
+    )
+    preds.loc[~played, "winner"] = None
+    graded = played & (preds["result"] != 0)
+    preds["correct"] = (preds["pick"] == preds["winner"]).astype(object).where(graded, None)
+    ats = preds.apply(_ats_outcome, axis=1, result_type="expand")
+    preds["ats_side"], preds["ats_result"] = ats[0], ats[1]
+    preds["units"] = preds["ats_result"].map({"win": WIN_PAYOUT, "loss": -1.0, "push": 0.0})
+    return preds
+
+
+def summarize(preds):
+    decided = preds[preds["result"].notna() & (preds["result"] != 0)]
+    y = (decided["result"] > 0).astype(int)
+    p = decided["home_win_prob"].clip(1e-6, 1 - 1e-6)
+    market = decided[decided["spread_line"].notna() & (decided["spread_line"] != 0)]
+    with_line = preds[preds["result"].notna() & preds["spread_line"].notna()]
+    bets = preds[preds["ats_result"].notna()]
+    wins, losses = (bets["ats_result"] == "win").sum(), (bets["ats_result"] == "loss").sum()
+    n = len(decided)
+    if n == 0:
+        return None
+    su = float((decided["correct"] == True).mean())  # noqa: E712
+    market_su = float(((market["spread_line"] > 0) == (market["result"] > 0)).mean()) if len(market) else None
+    mae = float((decided["result"] - decided["pred_margin"]).abs().mean())
+    market_mae = float((with_line["result"] - with_line["spread_line"]).abs().mean()) if len(with_line) else None
+    return {
+        "games": int(n),
+        "su": su,
+        "market_su": market_su,
+        "su_vs_market": su - market_su if market_su is not None else None,
+        "brier": float(((p - y) ** 2).mean()),
+        "log_loss": float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean()),
+        "mae": mae,
+        "market_mae": market_mae,
+        "mae_vs_market": mae - market_mae if market_mae is not None else None,
+        "ats_bets": int(len(bets)),
+        "ats_wins": int(wins),
+        "ats_losses": int(losses),
+        "ats_pushes": int((bets["ats_result"] == "push").sum()),
+        "ats_pct": float(wins / (wins + losses)) if wins + losses else None,
+        "units": float(bets["units"].sum()),
+        "home_pick_rate": float((decided["home_win_prob"] >= 0.5).mean()),
+        "market_home_fav_rate": float((market["spread_line"] > 0).mean()) if len(market) else None,
+        "home_win_rate": float(y.mean()),
+        "mean_home_prob": float(decided["home_win_prob"].mean()),
+    }
+
+
+def calibration(preds):
+    decided = preds[preds["result"].notna() & (preds["result"] != 0)]
+    bins = pd.cut(decided["home_win_prob"], CALIBRATION_BINS, include_lowest=True)
+    grouped = decided.groupby(bins, observed=True)
+    return [
+        {
+            "bin": f"{int(iv.left * 100)}-{int(iv.right * 100)}%",
+            "predicted": float(g["home_win_prob"].mean()),
+            "actual": float((g["result"] > 0).mean()),
+            "games": int(len(g)),
+        }
+        for iv, g in grouped
     ]
-    
-    for phase in game_phases:
-        phase_scenarios = int(n_scenarios * phase['weight'])
-        
-        for _ in range(phase_scenarios):
-            
-            # Down - use actual distribution if available
-            if 'down_dist' in stats:
-                down = np.random.choice(stats['down_dist'].index, p=stats['down_dist'].values)
-            else:
-                down = np.random.choice([1, 2, 3, 4], p=[0.45, 0.30, 0.20, 0.05])
-            
-            # Yards to go - use actual stats if available
-            if 'ydstogo_stats' in stats and down in stats['ydstogo_stats'].index:
-                ydstogo_mean = stats['ydstogo_stats'].loc[down, 'mean']
-                ydstogo_std = stats['ydstogo_stats'].loc[down, 'std']
-                ydstogo = max(1, int(np.random.normal(ydstogo_mean, ydstogo_std)))
-                ydstogo = min(ydstogo, 20)  # Cap at reasonable value
-            else:
-                # Default distribution based on down
-                if down == 1:
-                    ydstogo = 10
-                elif down == 2:
-                    ydstogo = np.random.randint(2, 15)
-                elif down == 3:
-                    ydstogo = np.random.randint(1, 20)
-                else:  # down == 4
-                    ydstogo = np.random.randint(1, 10)
-            
-            # Field position
-            if 'yardline_stats' in stats:
-                yardline_100 = max(1, min(99, int(np.random.normal(
-                    stats['yardline_stats']['mean'], 
-                    stats['yardline_stats']['std']
-                ))))
-            else:
-                yardline_100 = np.random.randint(1, 100)
-            
-            # Quarter
-            if 'qtr_dist' in stats:
-                qtr = np.random.choice(stats['qtr_dist'].index, p=stats['qtr_dist'].values)
-            else:
-                qtr = np.random.choice(phase['qtr_range'])
-            
-            # Time remaining - use actual stats if available
-            if 'game_seconds_stats' in stats:
-                game_seconds_remaining = max(1, int(np.random.normal(
-                    stats['game_seconds_stats']['mean'],
-                    stats['game_seconds_stats']['std']
-                )))
-                game_seconds_remaining = min(game_seconds_remaining, 3600)  # Cap at 60 minutes
-            else:
-                # Default time distribution
-                if qtr == 1:
-                    game_seconds_remaining = np.random.randint(1800, 3600)
-                elif qtr == 2:
-                    game_seconds_remaining = np.random.randint(900, 1800)
-                elif qtr == 3:
-                    game_seconds_remaining = np.random.randint(900, 1800)
-                else:  # qtr == 4
-                    game_seconds_remaining = np.random.randint(0, 900)
-            
-            # Time remaining - use actual stats if available
-            if 'game_seconds_stats' in stats:
-                game_seconds_remaining = max(1, int(np.random.normal(
-                    stats['game_seconds_stats']['mean'],
-                    stats['game_seconds_stats']['std']
-                )))
-                game_seconds_remaining = min(game_seconds_remaining, 3600)  # Cap at 60 minutes
-            else:
-                # Default time distribution
-                if qtr == 1:
-                    game_seconds_remaining = np.random.randint(1800, 3600)
-                elif qtr == 2:
-                    game_seconds_remaining = np.random.randint(900, 1800)
-                elif qtr == 3:
-                    game_seconds_remaining = np.random.randint(900, 1800)
-                else:  # qtr == 4
-                    game_seconds_remaining = np.random.randint(0, 900)
-            
-            # Calculate other time fields
-            quarter_seconds_remaining = game_seconds_remaining % 900
-            half_seconds_remaining = game_seconds_remaining % 1800 if qtr <= 2 else (game_seconds_remaining % 1800) + 1800
-            game_half = 1 if qtr <= 2 else 2
-            
-            # Create scenarios for both teams having possession
-            for posteam in [home_team, away_team]:
-                
-                # Base scenario matching your cleaned data structure
-                scenario = {
-                    'posteam': posteam,
-                    'defteam': away_team if posteam == home_team else home_team,
-                    'down': down,
-                    'ydstogo': ydstogo,
-                    'yardline_100': yardline_100,
-                    'qtr': qtr,
-                    'game_seconds_remaining': game_seconds_remaining,
-                    'quarter_seconds_remaining': quarter_seconds_remaining,
-                    'half_seconds_remaining': half_seconds_remaining,
-                    'game_half': game_half,
-                }
-                
-                # Add default values for other columns that exist in your cleaned data
-                # Based on your data_to_keep list
-                default_values = {
-                    'posteam_type': 'home' if posteam == home_team else 'away',
-                    'season_type': 'REG',  # Regular season
-                    'week': 1,  # Default week
-                    'quarter_end': 0,
-                    'drive': 1,
-                    'goal_to_go': 1 if yardline_100 <= 10 else 0,
-                    'shotgun': np.random.choice([0, 1], p=[0.4, 0.6]),
-                    'no_huddle': np.random.choice([0, 1], p=[0.8, 0.2]),
-                    'qb_dropback': np.random.choice([0, 1], p=[0.5, 0.5]),
-                    'qb_scramble': 0,
-                    'qb_kneel': 0,
-                    'qb_spike': 0,
-                    'side_of_field': posteam,
-                    'home_timeouts_remaining': 3,
-                    'away_timeouts_remaining': 3,
-                    'posteam_timeouts_remaining': 3,
-                    'defteam_timeouts_remaining': 3,
-                    'timeout': 0,
-                    'timeout_team': None
-                }
-                
-                # Add defaults to scenario
-                for key, value in default_values.items():
-                    scenario[key] = value
-                
-                # Add score differential with proper column name
-                if 'score_diff_col' in stats:
-                    adj_score_diff = score_differential if posteam == home_team else -score_differential
-                    scenario[stats['score_diff_col']] = adj_score_diff
-                
-                # Add any remaining columns from your actual labeled data with their median/mode values
-                for col in labeled_df.columns:
-                    if col not in scenario and col not in ['game_id', 'play_id', 'home_team', 'away_team', 'winning_team', 'posteam_win']:
-                        # Set reasonable defaults for missing features
-                        if labeled_df[col].dtype in ['int64', 'float64']:
-                            scenario[col] = labeled_df[col].median()
-                        else:
-                            mode_values = labeled_df[col].mode()
-                            scenario[col] = mode_values.iloc[0] if len(mode_values) > 0 else None
-                
-                scenarios.append(scenario)
-    
-    return pd.DataFrame(scenarios)
 
-def prepare_features_for_model(scenarios_df, model_features):
-    """
-    Prepare the scenario features to match your model's expected input
-    This must match EXACTLY how you prepared your training data
-    """
-    # Start with the scenarios dataframe
-    X = scenarios_df.copy()
-    
-    # Remove the same columns you removed during training
-    columns_to_remove = ["game_id", "play_id", "home_team", "away_team", "posteam", "defteam", "winning_team", "posteam_win"]
-    
-    # Only remove columns that actually exist in the dataframe
-    cols_to_drop = [col for col in columns_to_remove if col in X.columns]
-    X = X.drop(columns=cols_to_drop)
-    
-    # Apply pd.get_dummies to ALL remaining features (just like in training)
-    X = pd.get_dummies(X)
-    
-    # Add any missing columns that your model expects (set to 0)
-    missing_cols = [col for col in model_features if col not in X.columns]
-    for col in missing_cols:
-        X[col] = 0
-    
-    # Remove any extra columns that weren't in training and reorder to match model
-    X = X[[col for col in model_features if col in X.columns]]
-    
-    # If still missing some columns, add them as zeros
-    final_missing = [col for col in model_features if col not in X.columns]
-    for col in final_missing:
-        X[col] = 0
-    
-    # Final reorder to match model exactly
-    X = X[model_features]
-    
-    return X
 
-def simulate_game(home_team, away_team, model, model_features, clean_df, n_scenarios=500):
-    """
-    Simulate a single game by creating multiple scenarios and averaging predictions
-    """
-    # Create realistic scenarios
-    scenarios = create_realistic_game_scenarios(home_team, away_team, labeled_df, n_scenarios)
-    
-    # Prepare features for the model
-    X = prepare_features_for_model(scenarios, model_features)
-    
-    # Get predictions for all scenarios
-    try:
-        predictions = model.predict_proba(X)[:, 1]  # Probability of class 1 (win)
-    except:
-        # Fallback to regular predict if predict_proba doesn't work
-        predictions = model.predict(X)
-    
-    # Calculate win probability for each team
-    home_scenarios = scenarios[scenarios['posteam'] == home_team]
-    away_scenarios = scenarios[scenarios['posteam'] == away_team]
-    
-    home_indices = scenarios['posteam'] == home_team
-    away_indices = scenarios['posteam'] == away_team
-    
-    home_win_prob = predictions[home_indices].mean()
-    away_win_prob = predictions[away_indices].mean()
-    
-    # The team with higher average win probability wins
-    if home_win_prob > away_win_prob:
-        return home_team, home_win_prob
-    else:
-        return away_team, away_win_prob
+def cumulative_units(preds):
+    bets = preds[preds["ats_result"].notna()].sort_values(["season", "week", "gameday"])
+    weekly = bets.groupby(["season", "week"], as_index=False)["units"].sum()
+    weekly["cumulative"] = weekly["units"].cumsum()
+    return [
+        {"season": int(r.season), "week": int(r.week), "units": round(float(r.units), 3),
+         "cumulative": round(float(r.cumulative), 3)}
+        for r in weekly.itertuples()
+    ]
 
-# Debug: Check what columns are available in your labeled training data
-print("Available columns in your labeled training data:")
-print(labeled_df.columns.tolist())
-print(f"\nTotal columns: {len(labeled_df.columns)}")
 
-# Debug: Check model features
-print("\nModel expects these features:")
-model_features = model.get_booster().feature_names
-print(f"Total features: {len(model_features)}")
-print("Sample model features:", model_features[:10])
+def power_ratings(model, ratings, active_teams):
+    """Points better than a league-average team on a neutral field."""
+    coefs = model.margin_coefficients()
+    ratings = ratings[ratings["team"].isin(active_teams)].copy()
+    centred = {
+        "elo_diff": ratings["elo"] - ratings["elo"].mean(),
+        "off_epa_diff": ratings["off_epa"] - ratings["off_epa"].mean(),
+        "def_epa_diff": ratings["def_epa"] - ratings["def_epa"].mean(),
+        "pt_diff_diff": ratings["pt_diff"] - ratings["pt_diff"].mean(),
+    }
+    ratings["rating"] = sum(coefs[k] * v for k, v in centred.items())
+    ratings = ratings.sort_values("rating", ascending=False).reset_index(drop=True)
+    ratings["rank"] = ratings.index + 1
+    return [
+        {"rank": int(r.rank), "team": r.team, "rating": round(float(r.rating), 2), "elo": round(float(r.elo), 1),
+         "off_epa": round(float(r.off_epa), 4), "def_epa": round(float(r.def_epa), 4),
+         "pt_diff": round(float(r.pt_diff), 2)}
+        for r in ratings.itertuples()
+    ]
 
-# Simulate all games in the 2025 schedule
-print("Simulating 2025 NFL season games...")
-results = []
 
-for idx, game in tqdm(schedule_2025.iterrows(), total=len(schedule_2025), desc="Simulating games"):
-    home_team = game['home_team']
-    away_team = game['away_team']
-    game_id = game['game_id']
-    
-    # Simulate the game
-    winner, win_prob = simulate_game(home_team, away_team, model, model_features, labeled_df)
-    
-    results.append({
-        'game_id': game_id,
-        'home_team': home_team,
-        'away_team': away_team,
-        'projected_winner': winner,
-        'win_probability': win_prob,
-        'week': game['week'] if 'week' in game else None
-    })
+def game_records(preds):
+    cols = ["game_id", "season", "game_type", "week", "gameday", "gametime", "home_team", "away_team",
+            "home_score", "away_score", "result", "spread_line", "home_win_prob", "pred_margin",
+            "pick", "pick_prob", "correct", "ats_side", "ats_result", "units", "home_elo", "away_elo"]
+    out = preds[cols].copy()
+    out["gameday"] = out["gameday"].dt.strftime("%Y-%m-%d")
+    out["home_win_prob"] = out["home_win_prob"].round(4)
+    out["pick_prob"] = out["pick_prob"].round(4)
+    out["pred_margin"] = out["pred_margin"].round(1)
+    out["home_elo"] = out["home_elo"].round(0)
+    out["away_elo"] = out["away_elo"].round(0)
+    out = out.astype(object).where(out.notna(), None)
+    return out.to_dict(orient="records")
 
-# Create final predictions dataframe
-final_predictions = pd.DataFrame(results)
 
-# Display results
-print("\nSample predictions:")
-print(final_predictions[['game_id', 'home_team', 'away_team', 'projected_winner', 'win_probability']].head(20))
+def write_json(name, payload):
+    os.makedirs(FRONTEND_DATA_DIR, exist_ok=True)
+    with open(os.path.join(FRONTEND_DATA_DIR, name), "w") as f:
+        json.dump(payload, f, separators=(",", ":"))
 
-# Check prediction distribution
-home_wins = (final_predictions['projected_winner'] == final_predictions['home_team']).sum()
-away_wins = (final_predictions['projected_winner'] == final_predictions['away_team']).sum()
 
-print(f"\nPrediction Distribution:")
-print(f"Home team wins: {home_wins}")
-print(f"Away team wins: {away_wins}")
-print(f"Home win percentage: {home_wins / len(final_predictions) * 100:.1f}%")
+def main():
+    print("Loading schedules...")
+    games = load_games()
+    current_season = int(games.loc[games["result"].notna(), "season"].max())
+    print("Loading play-by-play EPA...")
+    team_epa = load_team_game_epa(range(games["season"].min(), current_season + 1),
+                                  refresh_seasons=(current_season,))
+    features, ratings = build_features(games, team_epa)
 
-# Show win probability distribution
-print(f"\nWin Probability Stats:")
-print(f"Mean win probability: {final_predictions['win_probability'].mean():.3f}")
-print(f"Min win probability: {final_predictions['win_probability'].min():.3f}")
-print(f"Max win probability: {final_predictions['win_probability'].max():.3f}")
+    print(f"Back-testing {FIRST_REPORT_SEASON}-{current_season} (train on prior seasons only)...")
+    backtest = annotate(walk_forward(features, FIRST_REPORT_SEASON, current_season))
+    completed_backtest = backtest[backtest["result"].notna()]
 
-# Save results
-final_predictions.to_csv('2025_season_predictions.csv', index=False)
-print("\nPredictions saved to '2025_season_predictions.csv'")
+    print("Fitting final model on all completed games...")
+    model = SymmetricGameModel().fit(features[(features["season"] >= TRAIN_START_SEASON)])
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    joblib.dump(model, MODEL_PATH)
+
+    current = features[features["season"] == current_season].copy()
+    upcoming_mask = current["result"].isna()
+    # Completed games keep their out-of-sample back-test prediction; future games use the final model.
+    current = current.merge(completed_backtest[["game_id", "home_win_prob", "pred_margin"]], on="game_id", how="left")
+    current.loc[upcoming_mask.values, "home_win_prob"] = model.predict_home_win_prob(current[upcoming_mask.values])
+    current.loc[upcoming_mask.values, "pred_margin"] = model.predict_home_margin(current[upcoming_mask.values])
+    current = annotate(current)
+    all_preds = pd.concat([backtest[backtest["season"] < current_season], current], ignore_index=True)
+
+    seasons = []
+    for season, group in all_preds.groupby("season"):
+        stats = summarize(group)
+        if stats:
+            seasons.append({"season": int(season), **stats})
+    upcoming_weeks = current.loc[current["result"].isna(), "week"]
+    current_week = int(upcoming_weeks.min()) if len(upcoming_weeks) else int(current["week"].max())
+
+    win_coefs = model.coefficients()
+    performance = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "current_season": current_season,
+        "current_week": current_week,
+        "first_season": FIRST_REPORT_SEASON,
+        "ats_edge_threshold": ATS_EDGE_THRESHOLD,
+        "model": {
+            "name": "Symmetric pre-game logistic model",
+            "features": FEATURES,
+            "coefficients": win_coefs,
+            "home_field_points": model.margin_coefficients()["venue"],
+            "home_field_win_prob": float(1 / (1 + np.exp(-win_coefs["venue"]))),
+        },
+        "summary": {
+            "all_time": summarize(all_preds),
+            "current_season": summarize(current),
+        },
+        "seasons": seasons,
+        "cumulative_units": cumulative_units(all_preds),
+        "calibration": calibration(all_preds),
+    }
+    write_json("performance.json", performance)
+    recent = all_preds[all_preds["season"] >= current_season - 1]
+    write_json("games.json", {"current_season": current_season, "current_week": current_week,
+                              "games": game_records(recent)})
+    write_json("ratings.json", {"season": current_season, "as_of_week": current_week,
+                                "teams": power_ratings(model, ratings, set(current["home_team"]))})
+
+    for season in (current_season - 1, current_season):
+        rows = all_preds[all_preds["season"] == season]
+        rows[["game_id", "week", "home_team", "away_team", "home_win_prob", "pred_margin", "pick", "pick_prob",
+              "spread_line", "result"]].round(4).to_csv(os.path.join(ROOT, f"{season}_season_predictions.csv"), index=False)
+
+    s = performance["summary"]["all_time"]
+    print(f"\n{FIRST_REPORT_SEASON}-{current_season} out-of-sample: {s['games']} games")
+    print(f"  Straight-up accuracy {s['su']:.1%} (market favourite {s['market_su']:.1%})")
+    print(f"  Home picks {s['home_pick_rate']:.1%} | market home favourites {s['market_home_fav_rate']:.1%}"
+          f" | home teams actually won {s['home_win_rate']:.1%}")
+    print(f"  Brier {s['brier']:.4f} | MAE {s['mae']:.2f} (market {s['market_mae']:.2f})")
+    print(f"  ATS {s['ats_wins']}-{s['ats_losses']}-{s['ats_pushes']} ({s['ats_pct']:.1%}), units {s['units']:+.1f}")
+
+if __name__ == "__main__":
+    main()
