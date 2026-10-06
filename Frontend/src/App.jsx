@@ -1,19 +1,28 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
-import Header from './components/Header'
-import Button from './components/Button'
+import TopNav from './components/TopNav'
+import { useData } from './lib/useData'
+import { useHashRoute } from './lib/useHashRoute'
+import Performance from './pages/Performance'
+import Games from './pages/Games'
+import Ratings from './pages/Ratings'
+import Methodology from './pages/Methodology'
 
-function App() {
-  const [count, setCount] = useState(0)
+const PAGES = { performance: Performance, games: Games, ratings: Ratings, method: Methodology }
 
+export default function App() {
+  const route = useHashRoute()
+  const { data: performance } = useData('performance')
+  const Page = PAGES[route] ?? Performance
   return (
-    <>
-    <Header/>
-    <Button/>
-    </>
-  );
+    <div className="app">
+      <TopNav route={PAGES[route] ? route : 'performance'} meta={performance} />
+      <main className="page">
+        <Page />
+      </main>
+      <footer className="footer">
+        Data: <a href="https://github.com/nflverse" target="_blank" rel="noreferrer">nflverse</a> · Model
+        predictions for entertainment purposes only.
+        {performance && <> · Updated {new Date(performance.generated_at).toLocaleString()}</>}
+      </footer>
+    </div>
+  )
 }
-
-export default App
