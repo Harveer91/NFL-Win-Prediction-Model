@@ -1,8 +1,11 @@
 nfl_data_py
 pandas
+pyarrow
+numpy
+scikit-learn
+joblib
 sqlalchemy
 psycopg2-binary
-scikit-learn
 python-dotenv
 xgboost
-libomp
+tqdm
